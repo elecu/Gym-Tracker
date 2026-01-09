@@ -460,9 +460,7 @@ function connectToDrive(interactive) {
   setLoginStatus("Connecting...");
   waitForGoogleIdentity(2000)
     .then(() => {
-      if (!ensureTokenClient()) {
-        throw new Error("gis_missing");
-      }
+      if (!ensureTokenClient()) throw new Error("gis_missing");
       return requestAccessToken(interactive);
     })
     .then(() => {
@@ -472,12 +470,14 @@ function connectToDrive(interactive) {
       setLoginStatus("");
       restoreStateFromDrive(interactive);
     })
-    .catch(() => {
+    .catch((err) => {
+      drive.accessToken = "";
+      drive.tokenExpiry = 0;
+      localStorage.removeItem(DRIVE_CONNECTED_KEY);
       setLoginRequired(true);
       driveStatus.textContent = "Sign-in required";
-      setLoginStatus(
-        "Sign-in failed. Check popup blockers and authorised origins."
-      );
+      setLoginStatus("Sign-in required. Click “Sign in with Google”.");
+      console.warn("Drive sign-in failed", err);
     });
 }
 
@@ -504,8 +504,15 @@ function requestAccessToken(interactive) {
       resolve(drive.accessToken);
       return;
     }
+    if (!interactive) {
+      reject(new Error("needs_user_gesture"));
+      return;
+    }
     drive.tokenClient.callback = (response) => {
-      if (response.error) {
+      if (response?.error || !response?.access_token) {
+        drive.accessToken = "";
+        drive.tokenExpiry = 0;
+        localStorage.removeItem(DRIVE_CONNECTED_KEY);
         reject(response);
         return;
       }
@@ -514,18 +521,25 @@ function requestAccessToken(interactive) {
       localStorage.setItem(DRIVE_CONNECTED_KEY, "true");
       resolve(drive.accessToken);
     };
-    drive.tokenClient.requestAccessToken({ prompt: interactive ? "consent" : "" });
+    drive.tokenClient.requestAccessToken();
   });
 }
 
 function maybeSyncDrive() {
   const now = Date.now();
   if (drive.syncing || now - drive.lastSync < DRIVE_SYNC_MIN_MS) return;
+  if (!drive.accessToken || now >= drive.tokenExpiry) return;
   syncStateToDrive(false);
 }
 
 async function syncStateToDrive(interactive) {
   if (drive.syncing) return;
+  const now = Date.now();
+  if (!interactive && (!drive.accessToken || now >= drive.tokenExpiry)) {
+    driveStatus.textContent = "Sign-in required to sync";
+    setLoginRequired(true);
+    return;
+  }
   drive.syncing = true;
   driveStatus.textContent = "Syncing...";
   try {
@@ -539,6 +553,7 @@ async function syncStateToDrive(interactive) {
   } catch (error) {
     console.warn("Drive sync failed", error);
     driveStatus.textContent = "Sync failed";
+    setLoginRequired(true);
   } finally {
     drive.syncing = false;
   }
