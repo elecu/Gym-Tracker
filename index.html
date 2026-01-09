@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gym Progress Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="top-bar">
+    <div class="brand">
+      <span class="brand-mark">GT</span>
+      <div>
+        <h1>Gym Progress Tracker</h1>
+        <p>Track machines, sets, and progress over time.</p>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button class="tab is-active" data-tab="tracker">Tracker</button>
+      <button class="tab" data-tab="settings">Settings</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="tracker" class="panel is-active">
+      <div class="controls">
+        <label for="groupSelect">Muscle group</label>
+        <select id="groupSelect">
+          <option value="legs">Legs</option>
+          <option value="chest">Chest</option>
+          <option value="shoulders">Shoulders</option>
+          <option value="back">Back</option>
+          <option value="arms">Arms</option>
+          <option value="abs">Abs</option>
+        </select>
+        <button id="addMachine" class="primary">+ Add machine</button>
+        <span class="autosave" id="autosaveStatus">Autosave ready</span>
+      </div>
+
+      <div id="machineList" class="machine-list"></div>
+    </section>
+
+    <section id="settings" class="panel">
+      <div class="settings-card">
+        <h2>Google Drive sync</h2>
+        <p>
+          Connect once to save your data and images in Google Drive. This is a
+          placeholder until you add your own Google API credentials.
+        </p>
+        <div class="settings-actions">
+          <button id="connectDrive" class="primary">Connect Google Drive</button>
+          <button id="disconnectDrive" class="ghost">Disconnect</button>
+        </div>
+        <div class="status" id="driveStatus">Not connected</div>
+        <details>
+          <summary>Setup notes</summary>
+          <p>
+            Create a Google Cloud project, enable Drive API, and paste your
+            Client ID and API key in <code>app.js</code>.
+          </p>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="chartDialog" class="chart-dialog">
+    <div class="chart-header">
+      <h3 id="chartTitle">Progress chart</h3>
+      <button id="closeChart" class="ghost">Close</button>
+    </div>
+    <canvas id="chartCanvas" width="640" height="360"></canvas>
+  </dialog>
+
+  <template id="machineTemplate">
+    <article class="machine">
+      <div class="machine-header">
+        <div>
+          <h3 class="machine-name">Unnamed machine</h3>
+          <span class="machine-group">Group</span>
+        </div>
+        <div class="machine-actions">
+          <button class="ghost open-chart">Chart</button>
+          <button class="ghost remove-machine">Remove</button>
+        </div>
+      </div>
+      <div class="machine-body">
+        <div class="machine-media">
+          <img class="machine-photo" alt="Machine photo" />
+          <label class="file-upload">
+            <input type="file" accept="image/*" capture="environment" />
+            Add photo
+          </label>
+        </div>
+        <div class="machine-details">
+          <label>
+            Visible name
+            <input class="machine-title" type="text" placeholder="Optional name" />
+          </label>
+          <div class="sessions">
+            <div class="sessions-header">
+              <h4>Sessions</h4>
+              <button class="ghost add-session">+ Add session</button>
+            </div>
+            <div class="session-list"></div>
+          </div>
+        </div>
+      </div>
+    </article>
+  </template>
+
+  <template id="sessionTemplate">
+    <div class="session">
+      <div class="session-meta">
+        <span class="session-date"></span>
+        <button class="ghost add-set">+ Add set</button>
+        <button class="ghost remove-session">Remove</button>
+      </div>
+      <div class="set-table">
+        <div class="set-row set-head">
+          <span>Set</span>
+          <span>Repetitions</span>
+        </div>
+        <div class="set-list"></div>
+      </div>
+    </div>
+  </template>
+
+  <template id="setTemplate">
+    <div class="set-row">
+      <span class="set-index"></span>
+      <input class="set-reps" type="number" min="0" placeholder="0" />
+      <button class="ghost remove-set">Remove</button>
+    </div>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
