@@ -30,6 +30,7 @@ const driveStatus = document.getElementById("driveStatus");
 const autoSyncToggle = document.getElementById("autoSync");
 const loginGate = document.getElementById("loginGate");
 const loginGateConnect = document.getElementById("loginGateConnect");
+const loginGateStatus = document.getElementById("loginGateStatus");
 const chartDialog = document.getElementById("chartDialog");
 const chartCanvas = document.getElementById("chartCanvas");
 const chartTitle = document.getElementById("chartTitle");
@@ -443,6 +444,7 @@ function ensureTokenClient() {
   if (drive.tokenClient) return true;
   if (!window.google?.accounts?.oauth2) {
     driveStatus.textContent = "Google identity services not loaded";
+    setLoginStatus("Google sign-in is still loading. Try again in a moment.");
     return false;
   }
   drive.tokenClient = google.accounts.oauth2.initTokenClient({
@@ -454,17 +456,26 @@ function ensureTokenClient() {
 }
 
 function connectToDrive(interactive) {
-  if (!ensureTokenClient()) return;
-  requestAccessToken(interactive)
+  waitForGoogleIdentity(2000)
+    .then(() => {
+      if (!ensureTokenClient()) {
+        throw new Error("gis_missing");
+      }
+      return requestAccessToken(interactive);
+    })
     .then(() => {
       driveStatus.textContent = "Connected to Google Drive";
       localStorage.setItem(DRIVE_CONNECTED_KEY, "true");
       setLoginRequired(false);
+      setLoginStatus("");
       restoreStateFromDrive(interactive);
     })
     .catch(() => {
       setLoginRequired(true);
       driveStatus.textContent = "Sign-in required";
+      setLoginStatus(
+        "Sign-in failed. Check popup blockers and authorised origins."
+      );
     });
 }
 
@@ -657,6 +668,32 @@ function setLoginRequired(required) {
 
 function isLoginRequired() {
   return !loginGate.classList.contains("is-hidden");
+}
+
+function setLoginStatus(message) {
+  if (!loginGateStatus) return;
+  loginGateStatus.textContent = message;
+}
+
+function waitForGoogleIdentity(timeoutMs) {
+  return new Promise((resolve, reject) => {
+    if (window.google?.accounts?.oauth2) {
+      resolve();
+      return;
+    }
+    const start = Date.now();
+    const timer = setInterval(() => {
+      if (window.google?.accounts?.oauth2) {
+        clearInterval(timer);
+        resolve();
+        return;
+      }
+      if (Date.now() - start > timeoutMs) {
+        clearInterval(timer);
+        reject(new Error("gis_timeout"));
+      }
+    }, 100);
+  });
 }
 
 async function restoreStateFromDrive(interactive) {

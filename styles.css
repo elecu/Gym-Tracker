@@ -80,6 +80,13 @@ p {
   letter-spacing: 0.08em;
 }
 
+.login-status {
+  margin-top: 0.9rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  min-height: 1.2rem;
+}
+
 .brand {
   display: flex;
   align-items: center;
