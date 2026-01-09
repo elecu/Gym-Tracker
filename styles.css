@@ -238,6 +238,10 @@ button {
   gap: 0.8rem;
 }
 
+.machine-media .edit-photo {
+  align-self: stretch;
+}
+
 .machine-photo {
   width: 100%;
   height: 220px;

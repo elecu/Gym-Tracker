@@ -13,6 +13,8 @@ const DRIVE_STATE_KEY = "driveState";
 const DRIVE_CONNECTED_KEY = "driveConnected";
 const DRIVE_AUTOSYNC_KEY = "driveAutoSync";
 const DRIVE_SYNC_MIN_MS = 60000;
+const DRIVE_SYNC_DELAY_MS = 60000;
+const DRIVE_SYNC_INTERVAL_MS = 30000;
 
 const DB_NAME = "gym-tracker";
 const STORE_NAME = "state";
@@ -77,6 +79,9 @@ const drive = {
   },
   photoSyncMap: {},
 };
+
+let driveSyncTimeout = null;
+let driveSyncInterval = null;
 
 const editState = {
   machineId: null,
@@ -240,12 +245,16 @@ function createMachineElement(machine) {
   const removeButton = node.querySelector(".remove-machine");
   const chartButton = node.querySelector(".open-chart");
   const editButton = node.querySelector(".edit-machine");
+  const editPhotoButton = node.querySelector(".edit-photo");
 
   article.dataset.id = machine.id;
   name.textContent = machine.name || "Unnamed machine";
   group.textContent = getGroupLabel(machine.group);
   photo.src = machine.photo || "";
   photo.style.display = machine.photo ? "block" : "none";
+  if (editPhotoButton) {
+    editPhotoButton.textContent = machine.photo ? "Edit photo" : "Add photo";
+  }
 
   addSessionButton.addEventListener("click", () => {
     addSession(machine);
@@ -266,6 +275,12 @@ function createMachineElement(machine) {
   editButton.addEventListener("click", () => {
     openEditDialog(machine);
   });
+
+  if (editPhotoButton) {
+    editPhotoButton.addEventListener("click", () => {
+      openEditDialog(machine);
+    });
+  }
 
   machine.sessions.forEach((session) => {
     const sessionElement = createSessionElement(machine, session);
@@ -633,6 +648,31 @@ function ensureTokenClient() {
   return true;
 }
 
+function startDriveSyncTimer() {
+  stopDriveSyncTimer();
+  driveSyncTimeout = setTimeout(() => {
+    if (autoSyncToggle.checked) {
+      maybeSyncDrive();
+    }
+    driveSyncInterval = setInterval(() => {
+      if (autoSyncToggle.checked) {
+        maybeSyncDrive();
+      }
+    }, DRIVE_SYNC_INTERVAL_MS);
+  }, DRIVE_SYNC_DELAY_MS);
+}
+
+function stopDriveSyncTimer() {
+  if (driveSyncTimeout) {
+    clearTimeout(driveSyncTimeout);
+    driveSyncTimeout = null;
+  }
+  if (driveSyncInterval) {
+    clearInterval(driveSyncInterval);
+    driveSyncInterval = null;
+  }
+}
+
 function connectToDrive(interactive) {
   driveStatus.textContent = "Connecting...";
   setLoginStatus("Connecting...");
@@ -646,13 +686,17 @@ function connectToDrive(interactive) {
       localStorage.setItem(DRIVE_CONNECTED_KEY, "true");
       setLoginRequired(false);
       setLoginStatus("");
-      restoreStateFromDrive(interactive);
+      return restoreStateFromDrive(interactive);
+    })
+    .then(() => {
+      startDriveSyncTimer();
     })
     .catch((err) => {
       drive.accessToken = "";
       drive.tokenExpiry = 0;
       localStorage.removeItem(DRIVE_CONNECTED_KEY);
       setLoginRequired(true);
+      stopDriveSyncTimer();
       driveStatus.textContent = "Sign-in required";
       setLoginStatus("Sign-in required. Click “Sign in with Google”.");
       console.warn("Drive sign-in failed", err);
@@ -666,6 +710,7 @@ function disconnectFromDrive() {
   drive.fileIds = { state: null, photos: {} };
   drive.photoSyncMap = {};
   localStorage.removeItem(DRIVE_CONNECTED_KEY);
+  stopDriveSyncTimer();
   saveDriveState();
   driveStatus.textContent = "Not connected";
   setLoginRequired(true);
@@ -704,9 +749,12 @@ function requestAccessToken(interactive) {
 }
 
 function maybeSyncDrive() {
+  if (!autoSyncToggle.checked) return;
   const now = Date.now();
   if (drive.syncing || now - drive.lastSync < DRIVE_SYNC_MIN_MS) return;
   if (!drive.accessToken || now >= drive.tokenExpiry) return;
+  const localUpdatedAt = getLocalUpdatedAt();
+  if (!state.dirty && drive.lastSync && localUpdatedAt <= drive.lastSync) return;
   syncStateToDrive(false);
 }
 
