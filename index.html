@@ -94,22 +94,15 @@
         </div>
         <div class="machine-actions">
           <button class="ghost open-chart">Chart</button>
+          <button class="ghost edit-machine">Edit</button>
           <button class="ghost remove-machine">Remove</button>
         </div>
       </div>
       <div class="machine-body">
         <div class="machine-media">
           <img class="machine-photo" alt="Machine photo" />
-          <label class="file-upload">
-            <input type="file" accept="image/*" capture="environment" />
-            Add photo
-          </label>
         </div>
         <div class="machine-details">
-          <label>
-            Visible name
-            <input class="machine-title" type="text" placeholder="Optional name" />
-          </label>
           <div class="sessions">
             <div class="sessions-header">
               <h4>Sessions</h4>
@@ -133,6 +126,8 @@
         <div class="set-row set-head">
           <span>Set</span>
           <span>Repetitions</span>
+          <span>Weight</span>
+          <span></span>
         </div>
         <div class="set-list"></div>
       </div>
@@ -143,9 +138,51 @@
     <div class="set-row">
       <span class="set-index"></span>
       <input class="set-reps" type="number" min="0" placeholder="0" />
+      <div class="set-weight">
+        <input class="set-weight-value" type="number" min="0" placeholder="0" />
+        <select class="set-weight-unit">
+          <option value="kg">kg</option>
+          <option value="lb">lb</option>
+        </select>
+      </div>
       <button class="ghost remove-set">Remove</button>
     </div>
   </template>
+
+  <dialog id="editDialog" class="edit-dialog">
+    <div class="edit-card">
+      <div class="edit-header">
+        <div>
+          <h3>Edit machine details</h3>
+          <p>Update the name and photo separately from the session log.</p>
+        </div>
+        <button id="closeEdit" class="ghost" type="button">Close</button>
+      </div>
+      <div class="edit-body">
+        <label>
+          Visible name
+          <input id="editName" type="text" placeholder="Optional name" />
+        </label>
+        <div class="edit-photo">
+          <div class="edit-photo-preview">
+            <img id="editPhotoPreview" alt="Machine photo preview" />
+            <span id="editPhotoPlaceholder" class="edit-photo-placeholder">No photo yet</span>
+          </div>
+          <div class="edit-photo-actions">
+            <label class="file-upload">
+              <input id="editPhotoInput" type="file" accept="image/*" />
+              Choose photo
+            </label>
+            <button id="cropPhoto" class="ghost" type="button">Crop center</button>
+            <button id="removePhoto" class="ghost" type="button">Remove photo</button>
+          </div>
+        </div>
+      </div>
+      <div class="edit-actions">
+        <button id="saveEdit" class="primary" type="button">Save changes</button>
+      </div>
+    </div>
+  </dialog>
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="app.js"></script>

@@ -1,6 +1,8 @@
 const state = {
   machines: [],
   dirty: false,
+  lastSavedAt: 0,
+  lastUpdatedAt: 0,
 };
 
 const DRIVE_CLIENT_ID =
@@ -35,6 +37,15 @@ const chartDialog = document.getElementById("chartDialog");
 const chartCanvas = document.getElementById("chartCanvas");
 const chartTitle = document.getElementById("chartTitle");
 const closeChart = document.getElementById("closeChart");
+const editDialog = document.getElementById("editDialog");
+const editNameInput = document.getElementById("editName");
+const editPhotoInput = document.getElementById("editPhotoInput");
+const editPhotoPreview = document.getElementById("editPhotoPreview");
+const editPhotoPlaceholder = document.getElementById("editPhotoPlaceholder");
+const cropPhotoButton = document.getElementById("cropPhoto");
+const removePhotoButton = document.getElementById("removePhoto");
+const saveEditButton = document.getElementById("saveEdit");
+const closeEditButton = document.getElementById("closeEdit");
 
 const machineTemplate = document.getElementById("machineTemplate");
 const sessionTemplate = document.getElementById("sessionTemplate");
@@ -67,6 +78,50 @@ const drive = {
   photoSyncMap: {},
 };
 
+const editState = {
+  machineId: null,
+  photo: "",
+  photoChanged: false,
+  photoUpdatedAt: 0,
+};
+
+function normalizeSet(set) {
+  const reps = Number.isFinite(set?.reps) ? set.reps : 0;
+  const weight = Number.isFinite(set?.weight) ? set.weight : 0;
+  const unit = set?.unit === "lb" ? "lb" : "kg";
+  return {
+    id: set?.id || uid(),
+    reps,
+    weight,
+    unit,
+  };
+}
+
+function normalizeSession(session) {
+  return {
+    id: session?.id || uid(),
+    date: session?.date || new Date().toISOString(),
+    sets: Array.isArray(session?.sets) ? session.sets.map(normalizeSet) : [],
+  };
+}
+
+function normalizeMachine(machine) {
+  return {
+    id: machine?.id || uid(),
+    group: machine?.group || "legs",
+    name: machine?.name || "",
+    photo: machine?.photo || "",
+    photoUpdatedAt: machine?.photoUpdatedAt || 0,
+    sessions: Array.isArray(machine?.sessions)
+      ? machine.sessions.map(normalizeSession)
+      : [],
+  };
+}
+
+function getLocalUpdatedAt() {
+  return state.lastUpdatedAt || state.lastSavedAt || 0;
+}
+
 function openDb() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, 1);
@@ -92,30 +147,31 @@ async function loadState() {
       request.onerror = () => resolve(null);
     });
     if (saved && saved.machines) {
-      state.machines = saved.machines.map((machine) => ({
-        sessions: [],
-        photoUpdatedAt: 0,
-        ...machine,
-      }));
+      state.machines = saved.machines.map(normalizeMachine);
+      state.lastSavedAt = saved.updatedAt || saved.lastSavedAt || 0;
     }
   } catch (error) {
     console.warn("Failed to load saved state", error);
   }
 }
 
-async function saveState() {
+async function saveState(options = {}) {
   try {
+    const { skipSync = false } = options;
+    const updatedAt = state.lastUpdatedAt || Date.now();
+    state.lastSavedAt = updatedAt;
     const db = await openDb();
     const tx = db.transaction(STORE_NAME, "readwrite");
     const store = tx.objectStore(STORE_NAME);
-    store.put({ machines: state.machines }, SAVE_KEY);
+    store.put({ machines: state.machines, updatedAt }, SAVE_KEY);
     await new Promise((resolve) => {
       tx.oncomplete = () => resolve();
       tx.onerror = () => resolve();
     });
     state.dirty = false;
+    state.lastUpdatedAt = 0;
     autosaveStatus.textContent = `Saved ${formatTime(new Date())}`;
-    if (autoSyncToggle.checked) {
+    if (!skipSync && autoSyncToggle.checked) {
       maybeSyncDrive();
     }
   } catch (error) {
@@ -126,6 +182,7 @@ async function saveState() {
 
 function scheduleSave() {
   state.dirty = true;
+  state.lastUpdatedAt = Date.now();
   autosaveStatus.textContent = "Pending save";
 }
 
@@ -177,40 +234,18 @@ function createMachineElement(machine) {
   const article = node.querySelector(".machine");
   const name = node.querySelector(".machine-name");
   const group = node.querySelector(".machine-group");
-  const titleInput = node.querySelector(".machine-title");
   const photo = node.querySelector(".machine-photo");
-  const fileInput = node.querySelector(".file-upload input");
   const addSessionButton = node.querySelector(".add-session");
   const sessionList = node.querySelector(".session-list");
   const removeButton = node.querySelector(".remove-machine");
   const chartButton = node.querySelector(".open-chart");
+  const editButton = node.querySelector(".edit-machine");
 
   article.dataset.id = machine.id;
   name.textContent = machine.name || "Unnamed machine";
   group.textContent = getGroupLabel(machine.group);
-  titleInput.value = machine.name || "";
   photo.src = machine.photo || "";
   photo.style.display = machine.photo ? "block" : "none";
-
-  titleInput.addEventListener("input", (event) => {
-    machine.name = event.target.value.trim();
-    name.textContent = machine.name || "Unnamed machine";
-    scheduleSave();
-  });
-
-  fileInput.addEventListener("change", (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      machine.photo = reader.result;
-      machine.photoUpdatedAt = Date.now();
-      photo.src = machine.photo;
-      photo.style.display = "block";
-      scheduleSave();
-    };
-    reader.readAsDataURL(file);
-  });
 
   addSessionButton.addEventListener("click", () => {
     addSession(machine);
@@ -226,6 +261,10 @@ function createMachineElement(machine) {
 
   chartButton.addEventListener("click", () => {
     openChart(machine);
+  });
+
+  editButton.addEventListener("click", () => {
+    openEditDialog(machine);
   });
 
   machine.sessions.forEach((session) => {
@@ -248,7 +287,7 @@ function createSessionElement(machine, session) {
   date.textContent = formatDate(new Date(session.date));
 
   addSetButton.addEventListener("click", () => {
-    session.sets.push({ id: uid(), reps: 0 });
+    session.sets.push({ id: uid(), reps: 0, weight: 0, unit: "kg" });
     renderMachines();
     scheduleSave();
   });
@@ -272,15 +311,30 @@ function createSetElement(machine, session, set, index) {
   const row = node.querySelector(".set-row");
   const label = node.querySelector(".set-index");
   const repsInput = node.querySelector(".set-reps");
+  const weightInput = node.querySelector(".set-weight-value");
+  const unitSelect = node.querySelector(".set-weight-unit");
   const removeSetButton = node.querySelector(".remove-set");
 
   row.dataset.setId = set.id;
   label.textContent = `#${index + 1}`;
   repsInput.value = set.reps ?? 0;
+  weightInput.value = set.weight ?? 0;
+  unitSelect.value = set.unit === "lb" ? "lb" : "kg";
 
   repsInput.addEventListener("input", (event) => {
     const value = Number(event.target.value);
     set.reps = Number.isNaN(value) ? 0 : value;
+    scheduleSave();
+  });
+
+  weightInput.addEventListener("input", (event) => {
+    const value = Number(event.target.value);
+    set.weight = Number.isNaN(value) ? 0 : value;
+    scheduleSave();
+  });
+
+  unitSelect.addEventListener("change", (event) => {
+    set.unit = event.target.value;
     scheduleSave();
   });
 
@@ -312,7 +366,7 @@ function addSession(machine) {
   machine.sessions.unshift({
     id: uid(),
     date: new Date().toISOString(),
-    sets: [{ id: uid(), reps: 0 }],
+    sets: [{ id: uid(), reps: 0, weight: 0, unit: "kg" }],
   });
 }
 
@@ -320,6 +374,63 @@ function openChart(machine) {
   chartTitle.textContent = `${machine.name || "Unnamed machine"} progress`;
   drawChart(machine.sessions);
   chartDialog.showModal();
+}
+
+function openEditDialog(machine) {
+  if (!editDialog || !editNameInput || !editPhotoInput) return;
+  editState.machineId = machine.id;
+  editState.photo = machine.photo || "";
+  editState.photoChanged = false;
+  editState.photoUpdatedAt = machine.photoUpdatedAt || 0;
+  editNameInput.value = machine.name || "";
+  editPhotoInput.value = "";
+  updateEditPhotoPreview(editState.photo);
+  editDialog.showModal();
+}
+
+function updateEditPhotoPreview(dataUrl) {
+  if (!editPhotoPreview || !editPhotoPlaceholder) return;
+  if (dataUrl) {
+    editPhotoPreview.src = dataUrl;
+    editPhotoPreview.style.display = "block";
+    editPhotoPlaceholder.style.display = "none";
+  } else {
+    editPhotoPreview.removeAttribute("src");
+    editPhotoPreview.style.display = "none";
+    editPhotoPlaceholder.style.display = "block";
+  }
+}
+
+function resetEditDialog() {
+  editState.machineId = null;
+  editState.photo = "";
+  editState.photoChanged = false;
+  editState.photoUpdatedAt = 0;
+  if (editNameInput) editNameInput.value = "";
+  if (editPhotoInput) editPhotoInput.value = "";
+  updateEditPhotoPreview("");
+}
+
+function loadImageFromDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("image_load_failed"));
+    image.src = dataUrl;
+  });
+}
+
+async function cropPhotoCenter(dataUrl) {
+  const image = await loadImageFromDataUrl(dataUrl);
+  const size = Math.min(image.width, image.height);
+  const sx = (image.width - size) / 2;
+  const sy = (image.height - size) / 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(image, sx, sy, size, size, 0, 0, size, size);
+  return canvas.toDataURL("image/jpeg", 0.92);
 }
 
 function drawChart(sessions) {
@@ -395,6 +506,72 @@ function setupChart() {
   closeChart.addEventListener("click", () => chartDialog.close());
 }
 
+function setupEditDialog() {
+  if (
+    !editDialog ||
+    !editNameInput ||
+    !editPhotoInput ||
+    !editPhotoPreview ||
+    !editPhotoPlaceholder ||
+    !cropPhotoButton ||
+    !removePhotoButton ||
+    !saveEditButton ||
+    !closeEditButton
+  ) {
+    return;
+  }
+  closeEditButton.addEventListener("click", () => editDialog.close());
+  editDialog.addEventListener("close", resetEditDialog);
+  editDialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    editDialog.close();
+  });
+  editPhotoInput.addEventListener("change", (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      editState.photo = reader.result;
+      editState.photoChanged = true;
+      editState.photoUpdatedAt = Date.now();
+      updateEditPhotoPreview(editState.photo);
+    };
+    reader.readAsDataURL(file);
+  });
+  cropPhotoButton.addEventListener("click", async () => {
+    if (!editState.photo) return;
+    try {
+      editState.photo = await cropPhotoCenter(editState.photo);
+      editState.photoChanged = true;
+      editState.photoUpdatedAt = Date.now();
+      updateEditPhotoPreview(editState.photo);
+    } catch (error) {
+      console.warn("Failed to crop image", error);
+    }
+  });
+  removePhotoButton.addEventListener("click", () => {
+    editState.photo = "";
+    editState.photoChanged = true;
+    editState.photoUpdatedAt = Date.now();
+    updateEditPhotoPreview("");
+  });
+  saveEditButton.addEventListener("click", () => {
+    const machine = state.machines.find((item) => item.id === editState.machineId);
+    if (!machine) {
+      editDialog.close();
+      return;
+    }
+    machine.name = editNameInput.value.trim();
+    if (editState.photoChanged) {
+      machine.photo = editState.photo || "";
+      machine.photoUpdatedAt = editState.photo ? editState.photoUpdatedAt : 0;
+    }
+    renderMachines();
+    scheduleSave();
+    editDialog.close();
+  });
+}
+
 async function init() {
   loginGateConnect.addEventListener("click", () => {
     connectToDrive(true);
@@ -404,6 +581,7 @@ async function init() {
   setupTabs();
   setupSettings();
   setupChart();
+  setupEditDialog();
   groupSelect.addEventListener("change", renderMachines);
   addMachineButton.addEventListener("click", addMachine);
   renderMachines();
@@ -543,6 +721,9 @@ async function syncStateToDrive(interactive) {
   drive.syncing = true;
   driveStatus.textContent = "Syncing...";
   try {
+    if (state.dirty) {
+      await saveState({ skipSync: true });
+    }
     await requestAccessToken(interactive);
     const folderId = await ensureDriveFolder();
     await uploadStateFile(folderId);
@@ -594,7 +775,8 @@ async function ensureDriveFolder() {
 }
 
 async function uploadStateFile(folderId) {
-  const body = JSON.stringify({ machines: state.machines }, null, 2);
+  const updatedAt = getLocalUpdatedAt() || Date.now();
+  const body = JSON.stringify({ machines: state.machines, updatedAt }, null, 2);
   const fileId = drive.fileIds.state;
   const upload = await uploadDriveFile({
     fileId,
@@ -713,6 +895,35 @@ function waitForGoogleIdentity(timeoutMs) {
   });
 }
 
+function shouldRestoreRemoteState(remoteState) {
+  const remoteMachines = Array.isArray(remoteState?.machines) ? remoteState.machines : [];
+  if (remoteMachines.length === 0) return false;
+  if (state.machines.length === 0) return true;
+  const remoteUpdatedAt = remoteState.updatedAt || remoteState.lastSavedAt || 0;
+  const localUpdatedAt = getLocalUpdatedAt();
+  if (!remoteUpdatedAt && !localUpdatedAt) return true;
+  return remoteUpdatedAt >= localUpdatedAt;
+}
+
+async function fetchDriveState(fileId) {
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+    {
+      headers: { Authorization: `Bearer ${drive.accessToken}` },
+    }
+  );
+  if (!response.ok) {
+    throw new Error("drive_state_fetch_failed");
+  }
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    console.warn("Failed to parse Drive state file", error);
+    return null;
+  }
+}
+
 async function restoreStateFromDrive(interactive) {
   driveStatus.textContent = "Checking Drive backup...";
   try {
@@ -721,28 +932,29 @@ async function restoreStateFromDrive(interactive) {
     const fileId = await findStateFileId(folderId);
     if (!fileId) {
       driveStatus.textContent = "No backup found yet";
-      if (interactive) {
+      if (interactive && state.machines.length > 0) {
         await syncStateToDrive(true);
       }
       return;
     }
-    const response = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
-      {
-        headers: { Authorization: `Bearer ${drive.accessToken}` },
-      }
-    );
-    const data = await response.json();
+    const data = await fetchDriveState(fileId);
     if (data && data.machines) {
-      state.machines = data.machines.map((machine) => ({
-        sessions: [],
-        photoUpdatedAt: 0,
-        ...machine,
-      }));
-      renderMachines();
-      await saveState();
-      await restorePhotosFromDrive(folderId);
-      driveStatus.textContent = `Backup downloaded ${formatDateTime(new Date())}`;
+      const remoteUpdatedAt = data.updatedAt || data.lastSavedAt || 0;
+      const shouldRestore = shouldRestoreRemoteState(data);
+      if (shouldRestore) {
+        state.machines = data.machines.map(normalizeMachine);
+        state.lastSavedAt = remoteUpdatedAt;
+        state.lastUpdatedAt = remoteUpdatedAt;
+        renderMachines();
+        await saveState();
+        await restorePhotosFromDrive(folderId);
+        driveStatus.textContent = `Backup downloaded ${formatDateTime(new Date())}`;
+      } else {
+        driveStatus.textContent = "Local data is newer; keeping this device";
+        if (interactive) {
+          await syncStateToDrive(true);
+        }
+      }
     } else {
       driveStatus.textContent = "Backup file was empty";
     }
