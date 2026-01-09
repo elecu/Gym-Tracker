@@ -43,6 +43,43 @@ p {
   gap: 1rem;
 }
 
+.login-gate {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(circle at top, #1d1b26 0%, #08080a 60%, #040404 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.login-gate.is-hidden {
+  display: none;
+}
+
+.login-card {
+  background: var(--panel);
+  padding: 2.5rem;
+  border-radius: 24px;
+  max-width: 420px;
+  text-align: center;
+  box-shadow: var(--shadow);
+  border: 1px solid #1f1e27;
+}
+
+.login-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+  margin-bottom: 1rem;
+  letter-spacing: 0.08em;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -290,11 +327,25 @@ button {
   display: flex;
   gap: 0.8rem;
   margin: 1.2rem 0 1rem;
+  flex-wrap: wrap;
 }
 
 .status {
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-bottom: 0.8rem;
+}
+
+.toggle input {
+  accent-color: var(--accent);
 }
 
 .chart-dialog {

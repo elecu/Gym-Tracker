@@ -10,6 +10,17 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <div id="loginGate" class="login-gate">
+    <div class="login-card">
+      <span class="login-mark">GT</span>
+      <h2>Connect Google Drive</h2>
+      <p>
+        Sign in once to unlock your tracker and keep every photo and session
+        backed up safely.
+      </p>
+      <button id="loginGateConnect" class="primary">Sign in with Google</button>
+    </div>
+  </div>
   <header class="top-bar">
     <div class="brand">
       <span class="brand-mark">GT</span>
@@ -48,20 +59,19 @@
         <h2>Google Drive sync</h2>
         <p>
           Connect once to save your data and images in Google Drive. This is a
-          placeholder until you add your own Google API credentials.
+          live OAuth integration. You still need to enable the Drive API in
+          Google Cloud.
         </p>
         <div class="settings-actions">
           <button id="connectDrive" class="primary">Connect Google Drive</button>
           <button id="disconnectDrive" class="ghost">Disconnect</button>
+          <button id="syncDrive" class="ghost">Sync now</button>
         </div>
+        <label class="toggle">
+          <input id="autoSync" type="checkbox" checked />
+          Auto sync after save
+        </label>
         <div class="status" id="driveStatus">Not connected</div>
-        <details>
-          <summary>Setup notes</summary>
-          <p>
-            Create a Google Cloud project, enable Drive API, and paste your
-            Client ID and API key in <code>app.js</code>.
-          </p>
-        </details>
       </div>
     </section>
   </main>
@@ -136,6 +146,7 @@
     </div>
   </template>
 
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="app.js"></script>
 </body>
 </html>

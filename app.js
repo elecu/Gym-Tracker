@@ -3,6 +3,15 @@ const state = {
   dirty: false,
 };
 
+const DRIVE_CLIENT_ID =
+  "195858719729-nj667rjf89ldrt9rev3mma4a3hfejva3.apps.googleusercontent.com";
+const DRIVE_SCOPES = "https://www.googleapis.com/auth/drive.file";
+const DRIVE_FOLDER_NAME = "GymTracker";
+const DRIVE_STATE_KEY = "driveState";
+const DRIVE_CONNECTED_KEY = "driveConnected";
+const DRIVE_AUTOSYNC_KEY = "driveAutoSync";
+const DRIVE_SYNC_MIN_MS = 60000;
+
 const DB_NAME = "gym-tracker";
 const STORE_NAME = "state";
 const SAVE_KEY = "app";
@@ -16,7 +25,11 @@ const tabs = document.querySelectorAll(".tab");
 const panels = document.querySelectorAll(".panel");
 const connectDrive = document.getElementById("connectDrive");
 const disconnectDrive = document.getElementById("disconnectDrive");
+const syncDrive = document.getElementById("syncDrive");
 const driveStatus = document.getElementById("driveStatus");
+const autoSyncToggle = document.getElementById("autoSync");
+const loginGate = document.getElementById("loginGate");
+const loginGateConnect = document.getElementById("loginGateConnect");
 const chartDialog = document.getElementById("chartDialog");
 const chartCanvas = document.getElementById("chartCanvas");
 const chartTitle = document.getElementById("chartTitle");
@@ -33,6 +46,25 @@ const formatDate = new Intl.DateTimeFormat("en-GB", {
 const formatTime = new Intl.DateTimeFormat("en-GB", {
   timeStyle: "short",
 }).format;
+
+const formatDateTime = new Intl.DateTimeFormat("en-GB", {
+  dateStyle: "medium",
+  timeStyle: "short",
+}).format;
+
+const drive = {
+  tokenClient: null,
+  accessToken: "",
+  tokenExpiry: 0,
+  syncing: false,
+  lastSync: 0,
+  folderId: null,
+  fileIds: {
+    state: null,
+    photos: {},
+  },
+  photoSyncMap: {},
+};
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -59,7 +91,11 @@ async function loadState() {
       request.onerror = () => resolve(null);
     });
     if (saved && saved.machines) {
-      state.machines = saved.machines;
+      state.machines = saved.machines.map((machine) => ({
+        sessions: [],
+        photoUpdatedAt: 0,
+        ...machine,
+      }));
     }
   } catch (error) {
     console.warn("Failed to load saved state", error);
@@ -78,6 +114,9 @@ async function saveState() {
     });
     state.dirty = false;
     autosaveStatus.textContent = `Saved ${formatTime(new Date())}`;
+    if (autoSyncToggle.checked) {
+      maybeSyncDrive();
+    }
   } catch (error) {
     console.warn("Failed to save state", error);
     autosaveStatus.textContent = "Save failed";
@@ -164,6 +203,7 @@ function createMachineElement(machine) {
     const reader = new FileReader();
     reader.onload = () => {
       machine.photo = reader.result;
+      machine.photoUpdatedAt = Date.now();
       photo.src = machine.photo;
       photo.style.display = "block";
       scheduleSave();
@@ -253,11 +293,13 @@ function createSetElement(machine, session, set, index) {
 }
 
 function addMachine() {
+  if (isLoginRequired()) return;
   const machine = {
     id: uid(),
     group: groupSelect.value,
     name: "",
     photo: "",
+    photoUpdatedAt: 0,
     sessions: [],
   };
   state.machines.unshift(machine);
@@ -335,10 +377,16 @@ function setupTabs() {
 
 function setupSettings() {
   connectDrive.addEventListener("click", () => {
-    driveStatus.textContent = "Google Drive connection not configured";
+    connectToDrive(true);
   });
   disconnectDrive.addEventListener("click", () => {
-    driveStatus.textContent = "Not connected";
+    disconnectFromDrive();
+  });
+  syncDrive.addEventListener("click", () => {
+    syncStateToDrive(true);
+  });
+  autoSyncToggle.addEventListener("change", () => {
+    localStorage.setItem(DRIVE_AUTOSYNC_KEY, autoSyncToggle.checked ? "1" : "0");
   });
 }
 
@@ -348,14 +396,379 @@ function setupChart() {
 
 async function init() {
   await loadState();
+  loadDriveState();
   setupTabs();
   setupSettings();
   setupChart();
+  loginGateConnect.addEventListener("click", () => {
+    connectToDrive(true);
+  });
   groupSelect.addEventListener("change", renderMachines);
   addMachineButton.addEventListener("click", addMachine);
   renderMachines();
   startAutosave();
   autosaveStatus.textContent = "Autosave running";
+  autoSyncToggle.checked = localStorage.getItem(DRIVE_AUTOSYNC_KEY) !== "0";
+  setLoginRequired(true);
+  if (localStorage.getItem(DRIVE_CONNECTED_KEY) === "true") {
+    connectToDrive(false);
+  }
 }
 
 init();
+
+function loadDriveState() {
+  const saved = localStorage.getItem(DRIVE_STATE_KEY);
+  if (!saved) return;
+  try {
+    const parsed = JSON.parse(saved);
+    drive.folderId = parsed.folderId || null;
+    drive.fileIds = parsed.fileIds || { state: null, photos: {} };
+    drive.photoSyncMap = parsed.photoSyncMap || {};
+  } catch (error) {
+    console.warn("Failed to load Drive state", error);
+  }
+}
+
+function saveDriveState() {
+  const payload = {
+    folderId: drive.folderId,
+    fileIds: drive.fileIds,
+    photoSyncMap: drive.photoSyncMap,
+  };
+  localStorage.setItem(DRIVE_STATE_KEY, JSON.stringify(payload));
+}
+
+function ensureTokenClient() {
+  if (drive.tokenClient) return true;
+  if (!window.google?.accounts?.oauth2) {
+    driveStatus.textContent = "Google identity services not loaded";
+    return false;
+  }
+  drive.tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: DRIVE_CLIENT_ID,
+    scope: DRIVE_SCOPES,
+    callback: () => {},
+  });
+  return true;
+}
+
+function connectToDrive(interactive) {
+  if (!ensureTokenClient()) return;
+  requestAccessToken(interactive)
+    .then(() => {
+      driveStatus.textContent = "Connected to Google Drive";
+      localStorage.setItem(DRIVE_CONNECTED_KEY, "true");
+      setLoginRequired(false);
+      restoreStateFromDrive(interactive);
+    })
+    .catch(() => {
+      setLoginRequired(true);
+      driveStatus.textContent = "Sign-in required";
+    });
+}
+
+function disconnectFromDrive() {
+  drive.accessToken = "";
+  drive.tokenExpiry = 0;
+  drive.folderId = null;
+  drive.fileIds = { state: null, photos: {} };
+  drive.photoSyncMap = {};
+  localStorage.removeItem(DRIVE_CONNECTED_KEY);
+  saveDriveState();
+  driveStatus.textContent = "Not connected";
+  setLoginRequired(true);
+}
+
+function requestAccessToken(interactive) {
+  return new Promise((resolve, reject) => {
+    if (!ensureTokenClient()) {
+      reject(new Error("missing_client"));
+      return;
+    }
+    const now = Date.now();
+    if (drive.accessToken && now < drive.tokenExpiry) {
+      resolve(drive.accessToken);
+      return;
+    }
+    drive.tokenClient.callback = (response) => {
+      if (response.error) {
+        reject(response);
+        return;
+      }
+      drive.accessToken = response.access_token;
+      drive.tokenExpiry = Date.now() + (response.expires_in - 60) * 1000;
+      localStorage.setItem(DRIVE_CONNECTED_KEY, "true");
+      resolve(drive.accessToken);
+    };
+    drive.tokenClient.requestAccessToken({ prompt: interactive ? "consent" : "" });
+  });
+}
+
+function maybeSyncDrive() {
+  const now = Date.now();
+  if (drive.syncing || now - drive.lastSync < DRIVE_SYNC_MIN_MS) return;
+  syncStateToDrive(false);
+}
+
+async function syncStateToDrive(interactive) {
+  if (drive.syncing) return;
+  drive.syncing = true;
+  driveStatus.textContent = "Syncing...";
+  try {
+    await requestAccessToken(interactive);
+    const folderId = await ensureDriveFolder();
+    await uploadStateFile(folderId);
+    await uploadPhotos(folderId);
+    drive.lastSync = Date.now();
+    driveStatus.textContent = `Backup uploaded ${formatDateTime(new Date())}`;
+    saveDriveState();
+  } catch (error) {
+    console.warn("Drive sync failed", error);
+    driveStatus.textContent = "Sync failed";
+  } finally {
+    drive.syncing = false;
+  }
+}
+
+async function ensureDriveFolder() {
+  if (drive.folderId) return drive.folderId;
+  const query =
+    "name='" +
+    DRIVE_FOLDER_NAME +
+    "' and mimeType='application/vnd.google-apps.folder' and trashed=false";
+  const url =
+    "https://www.googleapis.com/drive/v3/files?q=" +
+    encodeURIComponent(query) +
+    "&fields=files(id,name)";
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${drive.accessToken}` },
+  });
+  const data = await response.json();
+  if (data.files && data.files.length > 0) {
+    drive.folderId = data.files[0].id;
+    return drive.folderId;
+  }
+  const createResponse = await fetch("https://www.googleapis.com/drive/v3/files", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${drive.accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name: DRIVE_FOLDER_NAME,
+      mimeType: "application/vnd.google-apps.folder",
+    }),
+  });
+  const created = await createResponse.json();
+  drive.folderId = created.id;
+  return drive.folderId;
+}
+
+async function uploadStateFile(folderId) {
+  const body = JSON.stringify({ machines: state.machines }, null, 2);
+  const fileId = drive.fileIds.state;
+  const upload = await uploadDriveFile({
+    fileId,
+    name: "gym-tracker-state.json",
+    mimeType: "application/json",
+    data: new Blob([body], { type: "application/json" }),
+    folderId,
+  });
+  drive.fileIds.state = upload.id;
+}
+
+async function uploadPhotos(folderId) {
+  for (const machine of state.machines) {
+    if (!machine.photo) continue;
+    const lastSynced = drive.photoSyncMap[machine.id] || 0;
+    if (machine.photoUpdatedAt && machine.photoUpdatedAt <= lastSynced) {
+      continue;
+    }
+    const blob = dataUrlToBlob(machine.photo);
+    const fileName = `machine-${machine.id}.${blob.type.split(\"/\")[1] || \"jpg\"}`;
+    const fileId = drive.fileIds.photos[machine.id] || null;
+    const upload = await uploadDriveFile({
+      fileId,
+      name: fileName,
+      mimeType: blob.type,
+      data: blob,
+      folderId,
+    });
+    drive.fileIds.photos[machine.id] = upload.id;
+    drive.photoSyncMap[machine.id] = machine.photoUpdatedAt || Date.now();
+  }
+}
+
+async function uploadDriveFile({ fileId, name, mimeType, data, folderId }) {
+  const metadata = { name };
+  if (!fileId && folderId) {
+    metadata.parents = [folderId];
+  }
+  const boundary = "-------gymtrackerboundary";
+  const delimiter = `\r\n--${boundary}\r\n`;
+  const closeDelimiter = `\r\n--${boundary}--`;
+  const body = new Blob(
+    [
+      delimiter,
+      "Content-Type: application/json; charset=UTF-8\r\n\r\n",
+      JSON.stringify(metadata),
+      delimiter,
+      `Content-Type: ${mimeType}\r\n\r\n`,
+      data,
+      closeDelimiter,
+    ],
+    { type: `multipart/related; boundary=${boundary}` }
+  );
+  const urlBase = "https://www.googleapis.com/upload/drive/v3/files";
+  const url = fileId
+    ? `${urlBase}/${fileId}?uploadType=multipart`
+    : `${urlBase}?uploadType=multipart`;
+  const response = await fetch(url, {
+    method: fileId ? "PATCH" : "POST",
+    headers: {
+      Authorization: `Bearer ${drive.accessToken}`,
+    },
+    body,
+  });
+  return response.json();
+}
+
+function dataUrlToBlob(dataUrl) {
+  const [header, data] = dataUrl.split(",");
+  const mimeMatch = header.match(/data:(.*?);base64/);
+  const mime = mimeMatch ? mimeMatch[1] : "image/jpeg";
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mime });
+}
+
+function setLoginRequired(required) {
+  loginGate.classList.toggle("is-hidden", !required);
+  addMachineButton.disabled = required;
+  groupSelect.disabled = required;
+  tabs.forEach((tab) => {
+    tab.disabled = required;
+  });
+}
+
+function isLoginRequired() {
+  return !loginGate.classList.contains("is-hidden");
+}
+
+async function restoreStateFromDrive(interactive) {
+  driveStatus.textContent = "Checking Drive backup...";
+  try {
+    await requestAccessToken(interactive);
+    const folderId = await ensureDriveFolder();
+    const fileId = await findStateFileId(folderId);
+    if (!fileId) {
+      driveStatus.textContent = "No backup found yet";
+      if (interactive) {
+        await syncStateToDrive(true);
+      }
+      return;
+    }
+    const response = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+      {
+        headers: { Authorization: `Bearer ${drive.accessToken}` },
+      }
+    );
+    const data = await response.json();
+    if (data && data.machines) {
+      state.machines = data.machines.map((machine) => ({
+        sessions: [],
+        photoUpdatedAt: 0,
+        ...machine,
+      }));
+      renderMachines();
+      await saveState();
+      await restorePhotosFromDrive(folderId);
+      driveStatus.textContent = `Backup downloaded ${formatDateTime(new Date())}`;
+    } else {
+      driveStatus.textContent = "Backup file was empty";
+    }
+    drive.fileIds.state = fileId;
+    saveDriveState();
+  } catch (error) {
+    console.warn("Drive restore failed", error);
+    driveStatus.textContent = "Restore failed";
+  }
+}
+
+async function findStateFileId(folderId) {
+  if (drive.fileIds.state) return drive.fileIds.state;
+  const query =
+    "name='gym-tracker-state.json' and '" +
+    folderId +
+    "' in parents and trashed=false";
+  const url =
+    "https://www.googleapis.com/drive/v3/files?q=" +
+    encodeURIComponent(query) +
+    "&fields=files(id,name)";
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${drive.accessToken}` },
+  });
+  const data = await response.json();
+  if (data.files && data.files.length > 0) {
+    return data.files[0].id;
+  }
+  return null;
+}
+
+async function restorePhotosFromDrive(folderId) {
+  const files = await listPhotoFiles(folderId);
+  if (!files.length) return;
+  for (const file of files) {
+    const machineId = parseMachineId(file.name);
+    if (!machineId) continue;
+    const machine = state.machines.find((item) => item.id === machineId);
+    if (!machine) continue;
+    const blobResponse = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
+      { headers: { Authorization: `Bearer ${drive.accessToken}` } }
+    );
+    const blob = await blobResponse.blob();
+    const dataUrl = await blobToDataUrl(blob);
+    machine.photo = dataUrl;
+    machine.photoUpdatedAt = Date.now();
+    drive.fileIds.photos[machineId] = file.id;
+    drive.photoSyncMap[machineId] = machine.photoUpdatedAt;
+  }
+  renderMachines();
+  saveDriveState();
+}
+
+async function listPhotoFiles(folderId) {
+  const query =
+    "name contains 'machine-' and '" + folderId + "' in parents and trashed=false";
+  const url =
+    "https://www.googleapis.com/drive/v3/files?q=" +
+    encodeURIComponent(query) +
+    "&fields=files(id,name)";
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${drive.accessToken}` },
+  });
+  const data = await response.json();
+  return data.files || [];
+}
+
+function parseMachineId(fileName) {
+  if (!fileName.startsWith("machine-")) return null;
+  const trimmed = fileName.replace("machine-", "");
+  const dotIndex = trimmed.indexOf(".");
+  return dotIndex === -1 ? trimmed : trimmed.slice(0, dotIndex);
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
