@@ -396,14 +396,14 @@ function setupChart() {
 }
 
 async function init() {
+  loginGateConnect.addEventListener("click", () => {
+    connectToDrive(true);
+  });
   await loadState();
   loadDriveState();
   setupTabs();
   setupSettings();
   setupChart();
-  loginGateConnect.addEventListener("click", () => {
-    connectToDrive(true);
-  });
   groupSelect.addEventListener("change", renderMachines);
   addMachineButton.addEventListener("click", addMachine);
   renderMachines();
@@ -456,6 +456,8 @@ function ensureTokenClient() {
 }
 
 function connectToDrive(interactive) {
+  driveStatus.textContent = "Connecting...";
+  setLoginStatus("Connecting...");
   waitForGoogleIdentity(2000)
     .then(() => {
       if (!ensureTokenClient()) {
@@ -596,8 +598,8 @@ async function uploadPhotos(folderId) {
     if (machine.photoUpdatedAt && machine.photoUpdatedAt <= lastSynced) {
       continue;
     }
-    const blob = dataUrlToBlob(machine.photo);
-    const fileName = `machine-${machine.id}.${blob.type.split(\"/\")[1] || \"jpg\"}`;
+    const blob = dataUrlToBlob(machine.photo); 
+    const fileName = `machine-${machine.id}.${blob.type.split("/")[1] || "jpg"}`; 
     const fileId = drive.fileIds.photos[machine.id] || null;
     const upload = await uploadDriveFile({
       fileId,
