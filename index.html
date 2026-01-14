@@ -106,8 +106,18 @@
         <div class="machine-details">
           <div class="sessions">
             <div class="sessions-header">
-              <h4>Sessions</h4>
+              <div>
+                <h4>Sessions</h4>
+                <p class="sessions-subtitle">Showing latest session</p>
+              </div>
               <button class="ghost add-session">+ Add session</button>
+            </div>
+            <div class="session-tools">
+              <label class="session-picker">
+                <span>Session date</span>
+                <input class="session-date-input" type="date" />
+              </label>
+              <div class="session-previous" aria-live="polite"></div>
             </div>
             <div class="session-list"></div>
           </div>
@@ -138,13 +148,19 @@
   <template id="setTemplate">
     <div class="set-row">
       <span class="set-index"></span>
-      <input class="set-reps" type="number" min="0" placeholder="0" />
+      <label class="set-field set-reps-field">
+        <span class="set-label">Repetitions</span>
+        <input class="set-reps" type="number" min="0" placeholder="0" inputmode="numeric" />
+      </label>
       <div class="set-weight">
-        <input class="set-weight-value" type="number" min="0" placeholder="0" />
-        <select class="set-weight-unit">
-          <option value="kg">kg</option>
-          <option value="lb">lb</option>
-        </select>
+        <span class="set-label">Weight</span>
+        <div class="set-weight-inputs">
+          <input class="set-weight-value" type="number" min="0" placeholder="0" inputmode="numeric" />
+          <select class="set-weight-unit">
+            <option value="kg">kg</option>
+            <option value="lb">lb</option>
+          </select>
+        </div>
       </div>
       <button class="ghost remove-set">Remove</button>
     </div>
@@ -184,6 +200,12 @@
       </div>
     </div>
   </dialog>
+
+  <div id="undoToast" class="undo-toast" role="status">
+    <span id="undoMessage"></span>
+    <button id="undoAction" class="ghost" type="button">Undo</button>
+    <button id="undoDismiss" class="ghost" type="button">Close</button>
+  </div>
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="app.js"></script>

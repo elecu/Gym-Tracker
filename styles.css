@@ -217,6 +217,13 @@ button {
   margin-bottom: 1rem;
 }
 
+.machine-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .machine-name {
   font-size: 1.3rem;
 }
@@ -287,6 +294,43 @@ button {
   margin-bottom: 0.8rem;
 }
 
+.sessions-subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.session-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.8rem;
+  margin-bottom: 0.8rem;
+}
+
+.session-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.session-picker input {
+  min-width: 160px;
+}
+
+.session-previous {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.session-empty {
+  color: var(--muted);
+  font-size: 0.85rem;
+  padding: 0.4rem 0;
+}
+
 .session {
   border-top: 1px solid #1d1b24;
   padding-top: 0.8rem;
@@ -299,6 +343,7 @@ button {
   gap: 0.6rem;
   color: var(--muted);
   font-size: 0.85rem;
+  flex-wrap: wrap;
 }
 
 .set-table {
@@ -321,6 +366,21 @@ button {
   letter-spacing: 0.08em;
 }
 
+.set-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.set-label {
+  display: none;
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
 .set-reps {
   width: 100%;
 }
@@ -329,6 +389,14 @@ button {
   display: flex;
   gap: 0.5rem;
   align-items: center;
+  min-width: 0;
+}
+
+.set-weight-inputs {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  width: 100%;
 }
 
 .set-weight-value {
@@ -465,6 +533,44 @@ dialog::backdrop {
   margin-bottom: 1rem;
 }
 
+.undo-toast {
+  position: fixed;
+  left: 20px;
+  right: 20px;
+  bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: var(--panel);
+  border: 1px solid #1f1e27;
+  box-shadow: var(--shadow);
+  border-radius: 14px;
+  padding: 0.8rem 1rem;
+  z-index: 900;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(10px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.undo-toast span {
+  flex: 1;
+  font-size: 0.9rem;
+}
+
+.undo-toast.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+@media (min-width: 720px) {
+  .undo-toast {
+    width: min(520px, 90vw);
+    left: auto;
+  }
+}
+
 @media (max-width: 900px) {
   .machine-body {
     grid-template-columns: 1fr;
@@ -476,6 +582,97 @@ dialog::backdrop {
 
   .set-row {
     grid-template-columns: 50px 1fr 1fr auto;
+  }
+}
+
+@media (max-width: 720px) {
+  .top-bar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .tabs {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .tab {
+    flex: 1;
+    text-align: center;
+  }
+
+  .machine-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .machine-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .sessions-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.6rem;
+  }
+
+  .session-tools {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .set-table {
+    gap: 0.8rem;
+  }
+
+  .session-picker input {
+    width: 100%;
+  }
+
+  .set-head {
+    display: none;
+  }
+
+  .set-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "index index"
+      "reps weight"
+      "remove remove";
+    gap: 0.75rem 0.8rem;
+    padding-bottom: 0.8rem;
+  }
+
+  .set-index {
+    grid-area: index;
+  }
+
+  .set-reps-field {
+    grid-area: reps;
+  }
+
+  .set-weight {
+    grid-area: weight;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .set-weight-inputs {
+    width: 100%;
+  }
+
+  .remove-set {
+    grid-area: remove;
+    justify-self: flex-end;
+  }
+
+  .set-label {
+    display: block;
+  }
+
+  .set-weight-unit {
+    min-width: 64px;
   }
 }
 
@@ -491,6 +688,12 @@ dialog::backdrop {
   .controls {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .controls select,
+  .controls button,
+  .controls .primary {
+    width: 100%;
   }
 
   .autosave {

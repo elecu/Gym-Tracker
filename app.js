@@ -20,6 +20,7 @@ const DB_NAME = "gym-tracker";
 const STORE_NAME = "state";
 const SAVE_KEY = "app";
 const AUTOSAVE_MS = 30000;
+const UNDO_TIMEOUT_MS = 8000;
 
 const groupSelect = document.getElementById("groupSelect");
 const machineList = document.getElementById("machineList");
@@ -48,6 +49,10 @@ const cropPhotoButton = document.getElementById("cropPhoto");
 const removePhotoButton = document.getElementById("removePhoto");
 const saveEditButton = document.getElementById("saveEdit");
 const closeEditButton = document.getElementById("closeEdit");
+const undoToast = document.getElementById("undoToast");
+const undoMessage = document.getElementById("undoMessage");
+const undoAction = document.getElementById("undoAction");
+const undoDismiss = document.getElementById("undoDismiss");
 
 const machineTemplate = document.getElementById("machineTemplate");
 const sessionTemplate = document.getElementById("sessionTemplate");
@@ -66,6 +71,73 @@ const formatDateTime = new Intl.DateTimeFormat("en-GB", {
   timeStyle: "short",
 }).format;
 
+function formatDateInputValue(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getSessionDateKey(session) {
+  return formatDateInputValue(new Date(session.date));
+}
+
+function getSelectedSession(machine) {
+  const pickedDate = uiState.sessionDatePick[machine.id];
+  if (pickedDate) {
+    return machine.sessions.find((item) => getSessionDateKey(item) === pickedDate) || null;
+  }
+  const selectedId = uiState.sessionView[machine.id];
+  if (selectedId) {
+    const match = machine.sessions.find((item) => item.id === selectedId);
+    if (match) return match;
+  }
+  return machine.sessions[0] || null;
+}
+
+function getSessionSummary(session) {
+  if (!session || !session.sets.length) return "Previous: no sets logged yet";
+  let maxWeight = 0;
+  let maxUnit = session.sets[0]?.unit || "kg";
+  session.sets.forEach((set) => {
+    const weight = Number.isFinite(set.weight) ? set.weight : 0;
+    if (weight >= maxWeight) {
+      maxWeight = weight;
+      maxUnit = set.unit || maxUnit;
+    }
+  });
+  const setCount = session.sets.length;
+  return `Previous: ${setCount} sets | max ${maxWeight} ${maxUnit}`;
+}
+
+function confirmRemoval(message) {
+  return window.confirm(message);
+}
+
+function clearUndo() {
+  undoState.action = null;
+  if (undoState.timer) {
+    clearTimeout(undoState.timer);
+    undoState.timer = null;
+  }
+  if (undoToast) {
+    undoToast.classList.remove("is-visible");
+  }
+}
+
+function showUndo(message, action) {
+  if (!undoToast || !undoMessage) return;
+  undoMessage.textContent = message;
+  undoState.action = action;
+  undoToast.classList.add("is-visible");
+  if (undoState.timer) {
+    clearTimeout(undoState.timer);
+  }
+  undoState.timer = setTimeout(() => {
+    clearUndo();
+  }, UNDO_TIMEOUT_MS);
+}
+
 const drive = {
   tokenClient: null,
   accessToken: "",
@@ -82,6 +154,16 @@ const drive = {
 
 let driveSyncTimeout = null;
 let driveSyncInterval = null;
+
+const uiState = {
+  sessionView: {},
+  sessionDatePick: {},
+};
+
+const undoState = {
+  action: null,
+  timer: null,
+};
 
 const editState = {
   machineId: null,
@@ -241,6 +323,9 @@ function createMachineElement(machine) {
   const group = node.querySelector(".machine-group");
   const photo = node.querySelector(".machine-photo");
   const addSessionButton = node.querySelector(".add-session");
+  const sessionDateInput = node.querySelector(".session-date-input");
+  const sessionPrevious = node.querySelector(".session-previous");
+  const sessionsSubtitle = node.querySelector(".sessions-subtitle");
   const sessionList = node.querySelector(".session-list");
   const removeButton = node.querySelector(".remove-machine");
   const chartButton = node.querySelector(".open-chart");
@@ -257,13 +342,23 @@ function createMachineElement(machine) {
   }
 
   addSessionButton.addEventListener("click", () => {
-    addSession(machine);
+    const newSession = addSession(machine);
+    if (newSession) {
+      uiState.sessionView[machine.id] = newSession.id;
+      uiState.sessionDatePick[machine.id] = getSessionDateKey(newSession);
+    }
     renderMachines();
     scheduleSave();
   });
 
   removeButton.addEventListener("click", () => {
-    state.machines = state.machines.filter((item) => item.id !== machine.id);
+    if (!confirmRemoval("Remove this machine and all sessions?")) return;
+    const index = state.machines.findIndex((item) => item.id === machine.id);
+    if (index < 0) return;
+    const removed = state.machines.splice(index, 1)[0];
+    showUndo("Machine removed.", () => {
+      state.machines.splice(index, 0, removed);
+    });
     renderMachines();
     scheduleSave();
   });
@@ -282,10 +377,59 @@ function createMachineElement(machine) {
     });
   }
 
-  machine.sessions.forEach((session) => {
-    const sessionElement = createSessionElement(machine, session);
+  const selectedSession = getSelectedSession(machine);
+  const selectedIndex = selectedSession
+    ? machine.sessions.findIndex((item) => item.id === selectedSession.id)
+    : -1;
+  const previousSession =
+    selectedIndex >= 0 ? machine.sessions[selectedIndex + 1] : null;
+  if (sessionPrevious) {
+    sessionPrevious.textContent = previousSession ? getSessionSummary(previousSession) : "";
+  }
+  if (sessionsSubtitle) {
+    if (!machine.sessions.length) {
+      sessionsSubtitle.textContent = "No sessions yet";
+    } else if (selectedIndex === 0) {
+      sessionsSubtitle.textContent = "Showing latest session";
+    } else if (selectedIndex > 0) {
+      sessionsSubtitle.textContent = "Showing selected session";
+    } else {
+      sessionsSubtitle.textContent = "No session for this date";
+    }
+  }
+
+  if (sessionDateInput) {
+    const sessionDates = machine.sessions.map(getSessionDateKey);
+    const sortedDates = sessionDates.slice().sort();
+    sessionDateInput.disabled = machine.sessions.length === 0;
+    sessionDateInput.min = sortedDates[0] || "";
+    sessionDateInput.max = sortedDates[sortedDates.length - 1] || "";
+    sessionDateInput.value =
+      uiState.sessionDatePick[machine.id] || (selectedSession ? getSessionDateKey(selectedSession) : "");
+    sessionDateInput.addEventListener("change", () => {
+      uiState.sessionDatePick[machine.id] = sessionDateInput.value;
+      const match = machine.sessions.find(
+        (item) => getSessionDateKey(item) === sessionDateInput.value
+      );
+      uiState.sessionView[machine.id] = match ? match.id : null;
+      renderMachines();
+    });
+  }
+
+  if (!machine.sessions.length) {
+    const empty = document.createElement("p");
+    empty.className = "session-empty";
+    empty.textContent = "No sessions yet. Add one to start tracking.";
+    sessionList.appendChild(empty);
+  } else if (selectedSession) {
+    const sessionElement = createSessionElement(machine, selectedSession);
     sessionList.appendChild(sessionElement);
-  });
+  } else {
+    const empty = document.createElement("p");
+    empty.className = "session-empty";
+    empty.textContent = "No session on this date.";
+    sessionList.appendChild(empty);
+  }
 
   return node;
 }
@@ -308,7 +452,13 @@ function createSessionElement(machine, session) {
   });
 
   removeSessionButton.addEventListener("click", () => {
-    machine.sessions = machine.sessions.filter((item) => item.id !== session.id);
+    if (!confirmRemoval("Remove this session?")) return;
+    const index = machine.sessions.findIndex((item) => item.id === session.id);
+    if (index < 0) return;
+    const removed = machine.sessions.splice(index, 1)[0];
+    showUndo("Session removed.", () => {
+      machine.sessions.splice(index, 0, removed);
+    });
     renderMachines();
     scheduleSave();
   });
@@ -354,7 +504,13 @@ function createSetElement(machine, session, set, index) {
   });
 
   removeSetButton.addEventListener("click", () => {
-    session.sets = session.sets.filter((item) => item.id !== set.id);
+    if (!confirmRemoval("Remove this set?")) return;
+    const index = session.sets.findIndex((item) => item.id === set.id);
+    if (index < 0) return;
+    const removed = session.sets.splice(index, 1)[0];
+    showUndo("Set removed.", () => {
+      session.sets.splice(index, 0, removed);
+    });
     renderMachines();
     scheduleSave();
   });
@@ -378,11 +534,13 @@ function addMachine() {
 }
 
 function addSession(machine) {
-  machine.sessions.unshift({
+  const newSession = {
     id: uid(),
     date: new Date().toISOString(),
     sets: [{ id: uid(), reps: 0, weight: 0, unit: "kg" }],
-  });
+  };
+  machine.sessions.unshift(newSession);
+  return newSession;
 }
 
 function openChart(machine) {
@@ -521,6 +679,20 @@ function setupChart() {
   closeChart.addEventListener("click", () => chartDialog.close());
 }
 
+function setupUndo() {
+  if (!undoToast || !undoAction || !undoMessage || !undoDismiss) return;
+  undoAction.addEventListener("click", () => {
+    if (!undoState.action) return;
+    undoState.action();
+    clearUndo();
+    renderMachines();
+    scheduleSave();
+  });
+  undoDismiss.addEventListener("click", () => {
+    clearUndo();
+  });
+}
+
 function setupEditDialog() {
   if (
     !editDialog ||
@@ -596,6 +768,7 @@ async function init() {
   setupTabs();
   setupSettings();
   setupChart();
+  setupUndo();
   setupEditDialog();
   groupSelect.addEventListener("change", renderMachines);
   addMachineButton.addEventListener("click", addMachine);
