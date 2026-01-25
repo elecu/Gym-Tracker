@@ -39,17 +39,28 @@
   <main>
     <section id="tracker" class="panel is-active">
       <div class="controls">
-        <label for="groupSelect">Muscle group</label>
-        <select id="groupSelect">
-          <option value="legs">Legs</option>
-          <option value="chest">Chest</option>
-          <option value="shoulders">Shoulders</option>
-          <option value="back">Back</option>
-          <option value="arms">Arms</option>
-          <option value="abs">Abs</option>
-        </select>
-        <button id="addMachine" class="primary">+ Add machine</button>
-        <span class="autosave" id="autosaveStatus">Autosave ready</span>
+        <div class="group-filter">
+          <span class="group-label">Muscle groups</span>
+          <div class="group-options" id="groupFilters">
+            <button class="chip is-active" data-scope="filter" data-group="legs" type="button" aria-pressed="true">Legs</button>
+            <button class="chip" data-scope="filter" data-group="chest" type="button" aria-pressed="false">Chest</button>
+            <button class="chip" data-scope="filter" data-group="shoulders" type="button" aria-pressed="false">Shoulders</button>
+            <button class="chip" data-scope="filter" data-group="back" type="button" aria-pressed="false">Back</button>
+            <button class="chip" data-scope="filter" data-group="abs" type="button" aria-pressed="false">Abs</button>
+            <button class="chip" data-scope="filter" data-group="biceps" type="button" aria-pressed="false">Biceps</button>
+            <button class="chip" data-scope="filter" data-group="triceps" type="button" aria-pressed="false">Triceps</button>
+            <button class="chip chip-alias" data-scope="filter" data-alias="arms" data-targets="biceps,triceps" type="button" aria-pressed="false">Arms (Biceps + Triceps)</button>
+          </div>
+        </div>
+        <div class="controls-actions">
+          <label class="inline-toggle">
+            <input id="compactToggle" type="checkbox" />
+            Compact view
+          </label>
+          <button id="clearPins" class="ghost" type="button">Clear pins</button>
+          <button id="addMachine" class="primary">+ Add machine</button>
+          <span class="autosave" id="autosaveStatus">Autosave ready</span>
+        </div>
       </div>
 
       <div id="machineList" class="machine-list"></div>
@@ -93,6 +104,7 @@
           <span class="machine-group">Group</span>
         </div>
         <div class="machine-actions">
+          <button class="ghost pin-machine" type="button">Pin</button>
           <button class="ghost open-chart">Chart</button>
           <button class="ghost edit-machine">Edit</button>
           <button class="ghost remove-machine">Remove</button>
@@ -180,6 +192,20 @@
           Visible name
           <input id="editName" type="text" placeholder="Optional name" />
         </label>
+        <div class="edit-groups">
+          <span class="edit-label">Muscle groups</span>
+          <div class="group-options group-options--edit">
+            <button class="chip" data-scope="edit" data-group="legs" type="button" aria-pressed="false">Legs</button>
+            <button class="chip" data-scope="edit" data-group="chest" type="button" aria-pressed="false">Chest</button>
+            <button class="chip" data-scope="edit" data-group="shoulders" type="button" aria-pressed="false">Shoulders</button>
+            <button class="chip" data-scope="edit" data-group="back" type="button" aria-pressed="false">Back</button>
+            <button class="chip" data-scope="edit" data-group="abs" type="button" aria-pressed="false">Abs</button>
+            <button class="chip" data-scope="edit" data-group="biceps" type="button" aria-pressed="false">Biceps</button>
+            <button class="chip" data-scope="edit" data-group="triceps" type="button" aria-pressed="false">Triceps</button>
+            <button class="chip chip-alias" data-scope="edit" data-alias="arms" data-targets="biceps,triceps" type="button" aria-pressed="false">Arms (Biceps + Triceps)</button>
+          </div>
+          <p class="edit-hint">Pick every group that should show this machine.</p>
+        </div>
         <div class="edit-photo">
           <div class="edit-photo-preview">
             <img id="editPhotoPreview" alt="Machine photo preview" />
@@ -188,7 +214,11 @@
           <div class="edit-photo-actions">
             <label class="file-upload">
               <input id="editPhotoInput" type="file" accept="image/*" />
-              Choose photo
+              Gallery
+            </label>
+            <label class="file-upload">
+              <input id="editPhotoCameraInput" type="file" accept="image/*" capture="environment" />
+              Camera
             </label>
             <button id="cropPhoto" class="ghost" type="button">Crop center</button>
             <button id="removePhoto" class="ghost" type="button">Remove photo</button>

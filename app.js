@@ -21,10 +21,42 @@ const STORE_NAME = "state";
 const SAVE_KEY = "app";
 const AUTOSAVE_MS = 30000;
 const UNDO_TIMEOUT_MS = 8000;
+const GROUP_FILTER_KEY = "groupFilter";
+const COMPACT_VIEW_KEY = "compactView";
 
-const groupSelect = document.getElementById("groupSelect");
+const GROUP_LABELS = {
+  legs: "Legs",
+  chest: "Chest",
+  shoulders: "Shoulders",
+  back: "Back",
+  abs: "Abs",
+  biceps: "Biceps",
+  triceps: "Triceps",
+};
+
+const GROUP_ORDER = ["legs", "chest", "shoulders", "back", "abs", "biceps", "triceps"];
+
+const GROUP_ALIAS = {
+  arms: ["biceps", "triceps"],
+};
+
+const groupFilter = document.getElementById("groupFilters");
+const groupFilterButtons = Array.from(
+  document.querySelectorAll("[data-scope='filter'][data-group]")
+);
+const groupFilterAliasButtons = Array.from(
+  document.querySelectorAll("[data-scope='filter'][data-alias]")
+);
+const editGroupButtons = Array.from(
+  document.querySelectorAll("[data-scope='edit'][data-group]")
+);
+const editGroupAliasButtons = Array.from(
+  document.querySelectorAll("[data-scope='edit'][data-alias]")
+);
 const machineList = document.getElementById("machineList");
 const addMachineButton = document.getElementById("addMachine");
+const compactToggle = document.getElementById("compactToggle");
+const clearPinsButton = document.getElementById("clearPins");
 const autosaveStatus = document.getElementById("autosaveStatus");
 const tabs = document.querySelectorAll(".tab");
 const panels = document.querySelectorAll(".panel");
@@ -43,6 +75,7 @@ const closeChart = document.getElementById("closeChart");
 const editDialog = document.getElementById("editDialog");
 const editNameInput = document.getElementById("editName");
 const editPhotoInput = document.getElementById("editPhotoInput");
+const editPhotoCameraInput = document.getElementById("editPhotoCameraInput");
 const editPhotoPreview = document.getElementById("editPhotoPreview");
 const editPhotoPlaceholder = document.getElementById("editPhotoPlaceholder");
 const cropPhotoButton = document.getElementById("cropPhoto");
@@ -158,6 +191,9 @@ let driveSyncInterval = null;
 const uiState = {
   sessionView: {},
   sessionDatePick: {},
+  groupFilter: [],
+  primaryGroup: "legs",
+  pinnedMachines: [],
 };
 
 const undoState = {
@@ -167,6 +203,7 @@ const undoState = {
 
 const editState = {
   machineId: null,
+  groups: [],
   photo: "",
   photoChanged: false,
   photoUpdatedAt: 0,
@@ -193,9 +230,12 @@ function normalizeSession(session) {
 }
 
 function normalizeMachine(machine) {
+  const fallbackGroup = machine?.group || "legs";
+  const groups = sortGroups(normalizeGroups(machine?.groups ?? machine?.group, fallbackGroup));
   return {
     id: machine?.id || uid(),
-    group: machine?.group || "legs",
+    group: groups[0] || fallbackGroup,
+    groups,
     name: machine?.name || "",
     photo: machine?.photo || "",
     photoUpdatedAt: machine?.photoUpdatedAt || 0,
@@ -285,24 +325,98 @@ function uid() {
   return crypto.randomUUID();
 }
 
-function getGroupLabel(group) {
-  const labels = {
-    legs: "Legs",
-    chest: "Chest",
-    shoulders: "Shoulders",
-    back: "Back",
-    arms: "Arms",
-    abs: "Abs",
+function normalizeGroups(groups, fallbackGroup) {
+  const normalized = [];
+  const addGroup = (group) => {
+    if (!group) return;
+    if (GROUP_ALIAS[group]) {
+      GROUP_ALIAS[group].forEach(addGroup);
+      return;
+    }
+    normalized.push(group);
   };
-  return labels[group] || group;
+  if (Array.isArray(groups)) {
+    groups.forEach(addGroup);
+  } else if (typeof groups === "string") {
+    addGroup(groups);
+  } else if (fallbackGroup) {
+    addGroup(fallbackGroup);
+  }
+  const unique = Array.from(new Set(normalized));
+  if (unique.length === 0 && fallbackGroup) {
+    return [fallbackGroup];
+  }
+  return unique;
+}
+
+function sortGroups(groups) {
+  const order = new Map(GROUP_ORDER.map((group, index) => [group, index]));
+  return groups.slice().sort((a, b) => {
+    const aIndex = order.has(a) ? order.get(a) : 999;
+    const bIndex = order.has(b) ? order.get(b) : 999;
+    if (aIndex !== bIndex) return aIndex - bIndex;
+    return a.localeCompare(b);
+  });
+}
+
+function normalizeGroupSelection(groups, fallbackGroup = "legs") {
+  const normalized = normalizeGroups(groups, fallbackGroup).filter((group) => GROUP_LABELS[group]);
+  if (normalized.length === 0 && fallbackGroup) {
+    return [fallbackGroup];
+  }
+  return sortGroups(Array.from(new Set(normalized)));
+}
+
+function getGroupLabel(group) {
+  return GROUP_LABELS[group] || group;
+}
+
+function formatGroupLabel(groups) {
+  const normalized = sortGroups(normalizeGroups(groups, null));
+  const groupSet = new Set(normalized);
+  if (groupSet.size === 2 && groupSet.has("biceps") && groupSet.has("triceps")) {
+    return "Arms";
+  }
+  return normalized.map(getGroupLabel).join(" + ");
+}
+
+function getActiveGroupFilter() {
+  return uiState.groupFilter.length ? uiState.groupFilter : ["legs"];
+}
+
+function getPrimaryGroup() {
+  return uiState.primaryGroup || uiState.groupFilter[0] || "legs";
 }
 
 function renderMachines() {
   machineList.innerHTML = "";
-  const currentGroup = groupSelect.value;
-  const machines = state.machines.filter((machine) => machine.group === currentGroup);
+  const activeGroups = getActiveGroupFilter();
+  syncPinnedMachines();
+  const machines = state.machines.filter((machine) => {
+    const groups = Array.isArray(machine.groups) ? machine.groups : normalizeGroups(machine.group, "legs");
+    return groups.some((group) => activeGroups.includes(group));
+  });
+  const pinnedSet = new Set(uiState.pinnedMachines);
+  const pinnedMachines = [];
+  const regularMachines = [];
+  machines.forEach((machine) => {
+    if (pinnedSet.has(machine.id)) {
+      pinnedMachines.push(machine);
+    } else {
+      regularMachines.push(machine);
+    }
+  });
+  if (pinnedMachines.length > 1) {
+    const pinnedOrder = new Map(
+      uiState.pinnedMachines.map((id, index) => [id, index])
+    );
+    pinnedMachines.sort(
+      (a, b) => (pinnedOrder.get(a.id) ?? 999) - (pinnedOrder.get(b.id) ?? 999)
+    );
+  }
 
-  if (machines.length === 0) {
+  const totalCount = pinnedMachines.length + regularMachines.length;
+  if (totalCount === 0) {
     const empty = document.createElement("div");
     empty.className = "machine";
     empty.innerHTML = "<p>No machines yet. Add one to start tracking.</p>";
@@ -310,7 +424,17 @@ function renderMachines() {
     return;
   }
 
-  machines.forEach((machine) => {
+  if (pinnedMachines.length > 0) {
+    const pinnedStack = document.createElement("div");
+    pinnedStack.className = "pinned-stack";
+    pinnedMachines.forEach((machine) => {
+      const element = createMachineElement(machine);
+      pinnedStack.appendChild(element);
+    });
+    machineList.appendChild(pinnedStack);
+  }
+
+  regularMachines.forEach((machine) => {
     const element = createMachineElement(machine);
     machineList.appendChild(element);
   });
@@ -331,14 +455,24 @@ function createMachineElement(machine) {
   const chartButton = node.querySelector(".open-chart");
   const editButton = node.querySelector(".edit-machine");
   const editPhotoButton = node.querySelector(".edit-photo");
+  const pinButton = node.querySelector(".pin-machine");
 
   article.dataset.id = machine.id;
   name.textContent = machine.name || "Unnamed machine";
-  group.textContent = getGroupLabel(machine.group);
+  group.textContent = formatGroupLabel(
+    machine.groups && machine.groups.length ? machine.groups : machine.group
+  );
+  const pinned = isMachinePinned(machine.id);
+  article.classList.toggle("is-pinned", pinned);
   photo.src = machine.photo || "";
   photo.style.display = machine.photo ? "block" : "none";
   if (editPhotoButton) {
     editPhotoButton.textContent = machine.photo ? "Edit photo" : "Add photo";
+  }
+  if (pinButton) {
+    pinButton.textContent = pinned ? "Unpin" : "Pin";
+    pinButton.classList.toggle("is-active", pinned);
+    pinButton.setAttribute("aria-pressed", pinned ? "true" : "false");
   }
 
   addSessionButton.addEventListener("click", () => {
@@ -374,6 +508,13 @@ function createMachineElement(machine) {
   if (editPhotoButton) {
     editPhotoButton.addEventListener("click", () => {
       openEditDialog(machine);
+    });
+  }
+
+  if (pinButton) {
+    pinButton.addEventListener("click", () => {
+      togglePinnedMachine(machine.id);
+      renderMachines();
     });
   }
 
@@ -520,9 +661,11 @@ function createSetElement(machine, session, set, index) {
 
 function addMachine() {
   if (isLoginRequired()) return;
+  const groups = normalizeGroupSelection([getPrimaryGroup()], "legs");
   const machine = {
     id: uid(),
-    group: groupSelect.value,
+    group: groups[0],
+    groups,
     name: "",
     photo: "",
     photoUpdatedAt: 0,
@@ -552,12 +695,15 @@ function openChart(machine) {
 function openEditDialog(machine) {
   if (!editDialog || !editNameInput || !editPhotoInput) return;
   editState.machineId = machine.id;
+  editState.groups = normalizeGroupSelection(machine.groups || machine.group, "legs");
   editState.photo = machine.photo || "";
   editState.photoChanged = false;
   editState.photoUpdatedAt = machine.photoUpdatedAt || 0;
   editNameInput.value = machine.name || "";
   editPhotoInput.value = "";
+  if (editPhotoCameraInput) editPhotoCameraInput.value = "";
   updateEditPhotoPreview(editState.photo);
+  updateGroupSelection("edit", editState.groups, { persist: false });
   editDialog.showModal();
 }
 
@@ -576,12 +722,15 @@ function updateEditPhotoPreview(dataUrl) {
 
 function resetEditDialog() {
   editState.machineId = null;
+  editState.groups = [];
   editState.photo = "";
   editState.photoChanged = false;
   editState.photoUpdatedAt = 0;
   if (editNameInput) editNameInput.value = "";
   if (editPhotoInput) editPhotoInput.value = "";
+  if (editPhotoCameraInput) editPhotoCameraInput.value = "";
   updateEditPhotoPreview("");
+  updateGroupSelection("edit", ["legs"], { persist: false });
 }
 
 function loadImageFromDataUrl(dataUrl) {
@@ -649,6 +798,201 @@ function drawChart(sessions) {
   ctx.stroke();
 }
 
+function applyCompactView(enabled) {
+  document.body.classList.toggle("is-compact", enabled);
+}
+
+function loadCompactView() {
+  return localStorage.getItem(COMPACT_VIEW_KEY) === "1";
+}
+
+function setupCompactView() {
+  if (!compactToggle) return;
+  const enabled = loadCompactView();
+  compactToggle.checked = enabled;
+  applyCompactView(enabled);
+  compactToggle.addEventListener("change", () => {
+    applyCompactView(compactToggle.checked);
+    localStorage.setItem(COMPACT_VIEW_KEY, compactToggle.checked ? "1" : "0");
+  });
+}
+
+function setupPinnedControls() {
+  updatePinnedControls();
+  if (!clearPinsButton) return;
+  clearPinsButton.addEventListener("click", () => {
+    uiState.pinnedMachines = [];
+    updatePinnedControls();
+    renderMachines();
+  });
+}
+
+function updatePinnedControls() {
+  if (!clearPinsButton) return;
+  const count = uiState.pinnedMachines.length;
+  clearPinsButton.disabled = count === 0;
+  clearPinsButton.textContent = count ? `Clear pins (${count})` : "Clear pins";
+}
+
+function syncPinnedMachines() {
+  if (uiState.pinnedMachines.length === 0) return;
+  const available = new Set(state.machines.map((machine) => machine.id));
+  uiState.pinnedMachines = uiState.pinnedMachines.filter((id) => available.has(id));
+  updatePinnedControls();
+}
+
+function isMachinePinned(machineId) {
+  return uiState.pinnedMachines.includes(machineId);
+}
+
+function togglePinnedMachine(machineId) {
+  const index = uiState.pinnedMachines.indexOf(machineId);
+  if (index >= 0) {
+    uiState.pinnedMachines.splice(index, 1);
+  } else {
+    uiState.pinnedMachines.unshift(machineId);
+  }
+  updatePinnedControls();
+}
+
+function applyGroupButtonState(buttons, selectedGroups) {
+  buttons.forEach((button) => {
+    const group = button.dataset.group;
+    const isActive = selectedGroups.includes(group);
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
+}
+
+function applyAliasButtonState(buttons, selectedGroups) {
+  buttons.forEach((button) => {
+    const targets = (button.dataset.targets || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const activeCount = targets.filter((group) => selectedGroups.includes(group)).length;
+    const isActive = targets.length > 0 && activeCount === targets.length;
+    const isPartial = activeCount > 0 && !isActive;
+    button.classList.toggle("is-active", isActive);
+    button.classList.toggle("is-partial", isPartial);
+    button.setAttribute("aria-pressed", isActive ? "true" : isPartial ? "mixed" : "false");
+  });
+}
+
+function updateGroupSelection(scope, nextGroups, options = {}) {
+  const { persist = true } = options;
+  const normalized = normalizeGroupSelection(nextGroups, "legs");
+  if (scope === "filter") {
+    uiState.groupFilter = normalized;
+    if (!normalized.includes(uiState.primaryGroup)) {
+      uiState.primaryGroup = normalized[0] || "legs";
+    }
+    applyGroupButtonState(groupFilterButtons, normalized);
+    applyAliasButtonState(groupFilterAliasButtons, normalized);
+    if (persist) {
+      localStorage.setItem(GROUP_FILTER_KEY, JSON.stringify(normalized));
+    }
+  } else {
+    editState.groups = normalized;
+    applyGroupButtonState(editGroupButtons, normalized);
+    applyAliasButtonState(editGroupAliasButtons, normalized);
+  }
+}
+
+function toggleGroupSelection(currentGroups, group) {
+  const selected = new Set(currentGroups);
+  if (selected.has(group)) {
+    if (selected.size === 1) return currentGroups;
+    selected.delete(group);
+  } else {
+    selected.add(group);
+  }
+  return Array.from(selected);
+}
+
+function toggleAliasSelection(currentGroups, targets) {
+  const selected = new Set(currentGroups);
+  const allSelected = targets.every((group) => selected.has(group));
+  if (allSelected) {
+    if (selected.size === targets.length) {
+      return currentGroups;
+    }
+    targets.forEach((group) => selected.delete(group));
+    if (selected.size === 0) {
+      selected.add(targets[0]);
+    }
+  } else {
+    targets.forEach((group) => selected.add(group));
+  }
+  return Array.from(selected);
+}
+
+function loadGroupFilterSelection() {
+  const saved = localStorage.getItem(GROUP_FILTER_KEY);
+  if (!saved) return ["legs"];
+  try {
+    const parsed = JSON.parse(saved);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return normalizeGroupSelection(parsed, "legs");
+    }
+  } catch (error) {
+    console.warn("Failed to load group filter", error);
+  }
+  return ["legs"];
+}
+
+function setupGroupFilters() {
+  if (!groupFilter || groupFilterButtons.length === 0) return;
+  updateGroupSelection("filter", loadGroupFilterSelection(), { persist: false });
+  uiState.primaryGroup = uiState.groupFilter[0] || "legs";
+  groupFilterButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const next = toggleGroupSelection(uiState.groupFilter, button.dataset.group);
+      updateGroupSelection("filter", next);
+      if (uiState.groupFilter.includes(button.dataset.group)) {
+        uiState.primaryGroup = button.dataset.group;
+      } else {
+        uiState.primaryGroup = uiState.groupFilter[0] || "legs";
+      }
+      renderMachines();
+    });
+  });
+  groupFilterAliasButtons.forEach((button) => {
+    const targets = (button.dataset.targets || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (targets.length === 0) return;
+    button.addEventListener("click", () => {
+      const next = toggleAliasSelection(uiState.groupFilter, targets);
+      updateGroupSelection("filter", next);
+      uiState.primaryGroup = uiState.groupFilter[0] || "legs";
+      renderMachines();
+    });
+  });
+}
+
+function setupEditGroups() {
+  if (editGroupButtons.length === 0) return;
+  editGroupButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const next = toggleGroupSelection(editState.groups, button.dataset.group);
+      updateGroupSelection("edit", next, { persist: false });
+    });
+  });
+  editGroupAliasButtons.forEach((button) => {
+    const targets = (button.dataset.targets || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (targets.length === 0) return;
+    button.addEventListener("click", () => {
+      const next = toggleAliasSelection(editState.groups, targets);
+      updateGroupSelection("edit", next, { persist: false });
+    });
+  });
+}
+
 function setupTabs() {
   tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
@@ -713,7 +1057,7 @@ function setupEditDialog() {
     event.preventDefault();
     editDialog.close();
   });
-  editPhotoInput.addEventListener("change", (event) => {
+  const handlePhotoInputChange = (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
@@ -724,7 +1068,11 @@ function setupEditDialog() {
       updateEditPhotoPreview(editState.photo);
     };
     reader.readAsDataURL(file);
-  });
+  };
+  editPhotoInput.addEventListener("change", handlePhotoInputChange);
+  if (editPhotoCameraInput) {
+    editPhotoCameraInput.addEventListener("change", handlePhotoInputChange);
+  }
   cropPhotoButton.addEventListener("click", async () => {
     if (!editState.photo) return;
     try {
@@ -749,6 +1097,9 @@ function setupEditDialog() {
       return;
     }
     machine.name = editNameInput.value.trim();
+    const nextGroups = normalizeGroupSelection(editState.groups, machine.group || "legs");
+    machine.groups = nextGroups;
+    machine.group = nextGroups[0];
     if (editState.photoChanged) {
       machine.photo = editState.photo || "";
       machine.photoUpdatedAt = editState.photo ? editState.photoUpdatedAt : 0;
@@ -770,7 +1121,10 @@ async function init() {
   setupChart();
   setupUndo();
   setupEditDialog();
-  groupSelect.addEventListener("change", renderMachines);
+  setupGroupFilters();
+  setupEditGroups();
+  setupCompactView();
+  setupPinnedControls();
   addMachineButton.addEventListener("click", addMachine);
   renderMachines();
   startAutosave();
@@ -1077,10 +1431,21 @@ function dataUrlToBlob(dataUrl) {
   return new Blob([bytes], { type: mime });
 }
 
+function setGroupFilterDisabled(disabled) {
+  groupFilterButtons.forEach((button) => {
+    button.disabled = disabled;
+  });
+  groupFilterAliasButtons.forEach((button) => {
+    button.disabled = disabled;
+  });
+}
+
 function setLoginRequired(required) {
   loginGate.classList.toggle("is-hidden", !required);
   addMachineButton.disabled = required;
-  groupSelect.disabled = required;
+  setGroupFilterDisabled(required);
+  if (compactToggle) compactToggle.disabled = required;
+  if (clearPinsButton) clearPinsButton.disabled = required || uiState.pinnedMachines.length === 0;
   tabs.forEach((tab) => {
     tab.disabled = required;
   });

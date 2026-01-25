@@ -142,7 +142,7 @@ main {
 .controls {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-end;
   gap: 1rem;
   background: var(--panel);
   border-radius: var(--radius);
@@ -151,9 +151,77 @@ main {
   box-shadow: var(--shadow);
 }
 
-.controls label {
+.controls label,
+.group-label {
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.group-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  flex: 1 1 320px;
+  min-width: 240px;
+}
+
+.group-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.chip {
+  background: transparent;
+  border: 1px solid #2c2a35;
+  color: var(--muted);
+  padding: 0.45rem 0.9rem;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+}
+
+.chip.is-active {
+  background: var(--accent-soft);
+  color: var(--text);
+  border-color: rgba(66, 245, 179, 0.45);
+}
+
+.chip.is-partial {
+  color: var(--text);
+  border-style: dashed;
+}
+
+.chip-alias {
+  border-style: dashed;
+}
+
+.chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.controls-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.inline-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.inline-toggle input {
+  accent-color: var(--accent);
 }
 
 select,
@@ -191,7 +259,7 @@ button {
 }
 
 .autosave {
-  margin-left: auto;
+  margin-left: 0;
   color: var(--muted);
   font-size: 0.85rem;
 }
@@ -201,12 +269,27 @@ button {
   gap: 1.5rem;
 }
 
+.pinned-stack {
+  display: grid;
+  gap: 1rem;
+  position: sticky;
+  top: calc(1rem + env(safe-area-inset-top));
+  z-index: 20;
+  align-self: start;
+  grid-column: 1 / -1;
+}
+
 .machine {
   background: var(--panel);
   border-radius: var(--radius);
   padding: 1.5rem;
   box-shadow: var(--shadow);
   border: 1px solid #1f1e27;
+}
+
+.machine.is-pinned {
+  border-color: rgba(66, 245, 179, 0.5);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(66, 245, 179, 0.2);
 }
 
 .machine-header {
@@ -224,6 +307,12 @@ button {
   justify-content: flex-end;
 }
 
+.pin-machine.is-active {
+  background: var(--accent-soft);
+  border-color: rgba(66, 245, 179, 0.45);
+  color: var(--text);
+}
+
 .machine-name {
   font-size: 1.3rem;
 }
@@ -237,6 +326,44 @@ button {
   display: grid;
   grid-template-columns: 220px 1fr;
   gap: 1.5rem;
+}
+
+.is-compact .machine-list {
+  gap: 1rem;
+}
+
+.is-compact .pinned-stack {
+  gap: 0.8rem;
+}
+
+.is-compact .machine {
+  padding: 1.1rem;
+}
+
+.is-compact .machine-header {
+  margin-bottom: 0.6rem;
+}
+
+.is-compact .machine-body {
+  grid-template-columns: 1fr;
+  gap: 0.8rem;
+}
+
+.is-compact .machine-media {
+  display: none;
+}
+
+.is-compact .sessions {
+  padding: 0.8rem;
+}
+
+.is-compact .session {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+}
+
+.is-compact .set-row {
+  gap: 0.5rem;
 }
 
 .machine-media {
@@ -354,7 +481,7 @@ button {
 
 .set-row {
   display: grid;
-  grid-template-columns: 60px 1fr 1fr auto;
+  grid-template-columns: 60px 1fr 1.2fr auto;
   gap: 0.6rem;
   align-items: center;
 }
@@ -401,6 +528,7 @@ button {
 
 .set-weight-value {
   width: 100%;
+  min-width: 72px;
 }
 
 .set-weight-unit {
@@ -481,6 +609,20 @@ button {
 .edit-body {
   display: grid;
   gap: 1.2rem;
+}
+
+.edit-groups {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.edit-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.edit-hint {
+  font-size: 0.8rem;
 }
 
 .edit-photo {
@@ -581,7 +723,7 @@ dialog::backdrop {
   }
 
   .set-row {
-    grid-template-columns: 50px 1fr 1fr auto;
+    grid-template-columns: 50px 1fr 1.2fr auto;
   }
 }
 
@@ -690,9 +832,18 @@ dialog::backdrop {
     align-items: stretch;
   }
 
-  .controls select,
-  .controls button,
-  .controls .primary {
+  .controls-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .controls-actions .inline-toggle {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .controls-actions button,
+  .controls-actions .primary {
     width: 100%;
   }
 
