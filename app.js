@@ -194,6 +194,7 @@ const uiState = {
   groupFilter: [],
   primaryGroup: "legs",
   pinnedMachines: [],
+  collapsedMachines: [],
 };
 
 const undoState = {
@@ -392,6 +393,7 @@ function renderMachines() {
   machineList.innerHTML = "";
   const activeGroups = getActiveGroupFilter();
   syncPinnedMachines();
+  syncCollapsedMachines();
   const machines = state.machines.filter((machine) => {
     const groups = Array.isArray(machine.groups) ? machine.groups : normalizeGroups(machine.group, "legs");
     return groups.some((group) => activeGroups.includes(group));
@@ -463,7 +465,10 @@ function createMachineElement(machine) {
     machine.groups && machine.groups.length ? machine.groups : machine.group
   );
   const pinned = isMachinePinned(machine.id);
+  const collapsed = isMachineCollapsed(machine.id);
   article.classList.toggle("is-pinned", pinned);
+  article.classList.toggle("is-collapsed", collapsed);
+  name.setAttribute("aria-expanded", collapsed ? "false" : "true");
   photo.src = machine.photo || "";
   photo.style.display = machine.photo ? "block" : "none";
   if (editPhotoButton) {
@@ -474,6 +479,10 @@ function createMachineElement(machine) {
     pinButton.classList.toggle("is-active", pinned);
     pinButton.setAttribute("aria-pressed", pinned ? "true" : "false");
   }
+  const handleToggle = () => {
+    toggleMachineCollapsed(machine.id);
+    renderMachines();
+  };
 
   addSessionButton.addEventListener("click", () => {
     const newSession = addSession(machine);
@@ -517,6 +526,14 @@ function createMachineElement(machine) {
       renderMachines();
     });
   }
+
+  name.addEventListener("click", handleToggle);
+  name.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      handleToggle();
+    }
+  });
 
   const selectedSession = getSelectedSession(machine);
   const selectedIndex = selectedSession
@@ -672,6 +689,9 @@ function addMachine() {
     sessions: [],
   };
   state.machines.unshift(machine);
+  if (!uiState.collapsedMachines.includes(machine.id)) {
+    uiState.collapsedMachines.unshift(machine.id);
+  }
   renderMachines();
   scheduleSave();
 }
@@ -851,8 +871,34 @@ function togglePinnedMachine(machineId) {
     uiState.pinnedMachines.splice(index, 1);
   } else {
     uiState.pinnedMachines.unshift(machineId);
+    if (!isMachineCollapsed(machineId)) {
+      uiState.collapsedMachines.unshift(machineId);
+    }
   }
   updatePinnedControls();
+}
+
+function syncCollapsedMachines() {
+  if (uiState.collapsedMachines.length === 0) return;
+  const available = new Set(state.machines.map((machine) => machine.id));
+  uiState.collapsedMachines = uiState.collapsedMachines.filter((id) => available.has(id));
+}
+
+function isMachineCollapsed(machineId) {
+  return uiState.collapsedMachines.includes(machineId);
+}
+
+function toggleMachineCollapsed(machineId) {
+  const index = uiState.collapsedMachines.indexOf(machineId);
+  if (index >= 0) {
+    uiState.collapsedMachines.splice(index, 1);
+  } else {
+    uiState.collapsedMachines.unshift(machineId);
+  }
+}
+
+function initializeCollapsedMachines() {
+  uiState.collapsedMachines = state.machines.map((machine) => machine.id);
 }
 
 function applyGroupButtonState(buttons, selectedGroups) {
@@ -1115,6 +1161,7 @@ async function init() {
     connectToDrive(true);
   });
   await loadState();
+  initializeCollapsedMachines();
   loadDriveState();
   setupTabs();
   setupSettings();
@@ -1531,6 +1578,7 @@ async function restoreStateFromDrive(interactive) {
         state.machines = data.machines.map(normalizeMachine);
         state.lastSavedAt = remoteUpdatedAt;
         state.lastUpdatedAt = remoteUpdatedAt;
+        initializeCollapsedMachines();
         renderMachines();
         await saveState();
         await restorePhotosFromDrive(folderId);
